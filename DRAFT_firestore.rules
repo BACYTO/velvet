@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Primitive Definition
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // 1. User Rules
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.uid is string && data.uid == request.auth.uid &&
+               data.points is number && data.points >= 0 &&
+               data.unlocked is list &&
+               data.createdAt is timestamp;
+      }
+
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().points == 100;
+      allow update: if isOwner(userId) && isValidUser(incoming()) && (
+        // Action: Unlock Video
+        (incoming().diff(existing()).affectedKeys().hasOnly(['points', 'unlocked'])) ||
+        // Action: Earn Points
+        (incoming().diff(existing()).affectedKeys().hasOnly(['points', 'lastDaily'])) ||
+        // Action: General Update (XP, stats)
+        (incoming().diff(existing()).affectedKeys().hasOnly(['xp', 'liked', 'disliked', 'watchedHalf', 'completed', 'commented']))
+      );
+    }
+
+    // 2. Video Rules
+    match /videos/{videoId} {
+      function isValidVideo(data) {
+        return data.title is string && data.title.size() <= 100 &&
+               data.videoUrl is string && data.videoUrl.size() <= 1000 &&
+               data.uploaderId is string && data.uploaderId == request.auth.uid &&
+               data.createdAt is timestamp;
+      }
+
+      allow list: if true; // Public catalog
+      allow get: if true;
+      allow create: if isSignedIn() && isValidVideo(incoming());
+      allow update: if isOwner(existing().uploaderId) && isValidVideo(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'desc', 'cat', 'tags', 'tier'])
+      );
+      allow delete: if isOwner(existing().uploaderId);
+    }
+
+    // 3. Comment Rules
+    match /comments/{videoId}/msgs/{msgId} {
+      function isValidComment(data) {
+        return data.userId == request.auth.uid &&
+               data.text is string && data.text.size() <= 512 &&
+               data.videoId == videoId &&
+               data.createdAt is timestamp;
+      }
+
+      allow list: if true;
+      allow create: if isSignedIn() && isValidComment(incoming());
+      allow delete: if isOwner(existing().userId);
+    }
+  }
+}

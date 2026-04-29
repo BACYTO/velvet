@@ -1,0 +1,102 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and statistics",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "points": { "type": "number" },
+        "usdtBalance": { "type": "number" },
+        "liked": { "type": "array" },
+        "disliked": { "type": "array" },
+        "watchedHalf": { "type": "array" },
+        "completed": { "type": "array" },
+        "unlocked": { "type": "array" },
+        "commented": { "type": "array" },
+        "lastDaily": { "type": "string", "format": "date-time" },
+        "xp": { "type": "number" },
+        "displayName": { "type": "string" },
+        "bio": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "roles": { "type": "array" },
+        "inventory": { "type": "array" },
+        "activeCosmetics": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "points", "usdtBalance"]
+    },
+    "Trade": {
+      "title": "Trade",
+      "description": "Point and USDT exchange log",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "senderPoints": { "type": "number" },
+        "receiverPoints": { "type": "number" },
+        "senderUSDT": { "type": "number" },
+        "receiverUSDT": { "type": "number" },
+        "senderNodes": { "type": "array" },
+        "receiverNodes": { "type": "array" },
+        "commission": { "type": "number" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "receiverId", "status"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Video comment",
+      "type": "object",
+      "properties": {
+        "videoId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "color": { "type": "string" }
+      },
+      "required": ["videoId", "userId", "text", "createdAt"]
+    },
+    "Video": {
+      "title": "Video",
+      "description": "User uploaded video metadata",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "desc": { "type": "string" },
+        "videoUrl": { "type": "string" },
+        "cat": { "type": "string" },
+        "tier": { "type": "string" },
+        "tags": { "type": "array" },
+        "dur": { "type": "string" },
+        "views": { "type": "number" },
+        "likes": { "type": "number" },
+        "dislikes": { "type": "number" },
+        "bg": { "type": "string" },
+        "uploaderId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "videoUrl", "uploaderId", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User data"
+    },
+    "trades/{tradeId}": {
+      "schema": "Trade",
+      "description": "Point exchange logs"
+    },
+    "videos/{videoId}/comments/{msgId}": {
+      "schema": "Comment",
+      "description": "Comments for a specific video"
+    },
+    "videos/{videoId}": {
+      "schema": "Video",
+      "description": "Uploaded videos"
+    }
+  }
+}

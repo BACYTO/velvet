@@ -1,0 +1,153 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Phase 3: Primitive Definition
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isAdmin() { 
+      return isSignedIn() && (
+        request.auth.token.email == 'Belcore.Lorenzo@gmail.com' ||
+        request.auth.token.email == 'jdd10052@gmail.com' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+      );
+    }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isVerified() { return request.auth.token.email_verified == true; }
+
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // 1. User Rules
+    match /users/{userId} {
+      function isValidUser(data) {
+        return data.uid is string && data.uid == userId &&
+               data.points is number && data.points >= 0 &&
+               data.usdtBalance is number && data.usdtBalance >= 0 &&
+               data.unlocked is list &&
+               (data.displayName == null || (data.displayName is string && data.displayName.size() <= 60)) &&
+               (data.bio == null || (data.bio is string && data.bio.size() <= 1000));
+      }
+
+      allow get: if isSignedIn(); 
+      allow create: if isOwner(userId) && isValidUser(incoming()) && incoming().points == 100 && incoming().usdtBalance == 0;
+      allow update: if (isOwner(userId) && isValidUser(incoming()) && (
+        // Action: Unlock Video
+        (incoming().diff(existing()).affectedKeys().hasOnly(['points', 'unlocked'])) ||
+        // Action: Earn Points
+        (incoming().diff(existing()).affectedKeys().hasOnly(['points', 'lastDaily'])) ||
+        // Action: General Update (XP, stats, Profile)
+        (incoming().diff(existing()).affectedKeys().hasOnly(['xp', 'liked', 'disliked', 'watchedHalf', 'completed', 'commented', 'displayName', 'bio', 'photoURL', 'inventory', 'activeCosmetics'])) ||
+        // Action: Refund P2P Trade (Cancel)
+        (incoming().diff(existing()).affectedKeys().hasAll(['points', 'usdtBalance']) && incoming().points >= existing().points && incoming().usdtBalance >= existing().usdtBalance)
+      )) || (
+        // Action: Receive P2P Trade (Batch update from trade completion)
+        isSignedIn() && 
+        incoming().diff(existing()).affectedKeys().hasAny(['points', 'usdtBalance'])
+      );
+    }
+
+    // 2. Trade Rules
+    match /trades/{tradeId} {
+      function isValidTradeCreation(data) {
+        return data.senderId == request.auth.uid &&
+               data.receiverId is string &&
+               data.senderPoints is number && data.senderPoints >= 0 &&
+               data.senderUSDT is number && data.senderUSDT >= 0 &&
+               data.senderNodes is list &&
+               data.receiverPoints is number && data.receiverPoints >= 0 &&
+               data.receiverUSDT is number && data.receiverUSDT >= 0 &&
+               data.receiverNodes is list &&
+               data.status == 'pending' &&
+               data.senderAccepted == true &&
+               data.receiverAccepted == false;
+      }
+
+      function isRelationalPeer() {
+        return existing().senderId == request.auth.uid || existing().receiverId == request.auth.uid;
+      }
+
+      allow create: if isSignedIn() && isValidTradeCreation(incoming());
+      allow list: if isSignedIn() && (existing().receiverId == 'PUBLIC' || isRelationalPeer());
+      allow get: if isSignedIn() && (existing().receiverId == 'PUBLIC' || isRelationalPeer());
+      allow update: if isSignedIn() && isRelationalPeer() && (
+        // Action: Confirm (Receiver)
+        (request.auth.uid == existing().receiverId && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'receiverAccepted']) &&
+         incoming().status == 'completed') ||
+        // Action: Cancel (Sender)
+        (request.auth.uid == existing().senderId && 
+         existing().status == 'pending' &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+         incoming().status == 'cancelled')
+      );
+    }
+
+    // 3. Video Rules
+    match /videos/{videoId} {
+      function isValidVideo(data) {
+        return data.title is string && data.title.size() <= 100 &&
+               data.videoUrl is string && data.videoUrl.size() <= 2000 &&
+               (data.uploaderId == null || (data.uploaderId is string && data.uploaderId == request.auth.uid)) &&
+               data.createdAt is timestamp;
+      }
+
+      allow list: if true;
+      allow get: if true;
+      allow create: if isSignedIn() && isValidVideo(incoming());
+      allow update: if (isSignedIn() && existing().uploaderId == request.auth.uid && isValidVideo(incoming()) && (
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'desc', 'cat', 'tags', 'tier'])
+      )) || (
+        // Allow anyone to increment views
+        incoming().diff(existing()).affectedKeys().hasOnly(['views']) &&
+        incoming().views == existing().views + 1
+      );
+      allow delete: if isSignedIn() && existing().uploaderId == request.auth.uid;
+
+      // Subcollection for comments
+      match /comments/{commentId} {
+        function isValidComment(data) {
+          return data.userId == request.auth.uid &&
+                 data.text is string && data.text.size() <= 2000 &&
+                 data.createdAt is timestamp;
+        }
+        allow list: if true;
+        allow create: if isSignedIn() && isValidComment(incoming());
+        allow delete: if isSignedIn() && existing().userId == request.auth.uid;
+      }
+    }
+    // 4. Mining Node Rules
+    match /userNodes/{nodeId} {
+      function isValidNodeCreation(data) {
+        return data.userId == request.auth.uid &&
+               data.floatValue >= 0.0 && data.floatValue <= 1.0 &&
+               data.overclockLevel == 0 &&
+               data.status == 'offline';
+      }
+
+      allow create: if isSignedIn() && isValidNodeCreation(incoming());
+      allow get, list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || (
+        // Action: Transfer during Trade Completion
+        incoming().diff(existing()).affectedKeys().hasOnly(['userId']) &&
+        isSignedIn()
+      )) && (
+        // Action: Activate
+        (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lastActivation']) && 
+         incoming().status == 'online' && existing().floatValue < 1.0) ||
+        // Action: Collect
+        (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lastActivation']) && 
+         incoming().status == 'offline') ||
+        // Action: Overclock
+        (incoming().diff(existing()).affectedKeys().hasOnly(['overclockLevel', 'floatValue', 'status']) && 
+         incoming().overclockLevel > existing().overclockLevel && 
+         incoming().floatValue > existing().floatValue) ||
+        // Action: Transfer
+        (incoming().diff(existing()).affectedKeys().hasOnly(['userId']))
+      );
+    }
+  }
+}
